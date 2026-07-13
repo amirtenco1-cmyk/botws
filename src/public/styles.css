@@ -374,11 +374,11 @@ textarea:focus {
 
 #sidebarMenuBtn {
   display: inline-flex;
-  color: var(--foreground);
+  color: #25d366;
 }
 
 #sidebarMenuBtn svg {
-  fill: none;
+  fill: currentColor;
 }
 
 .schedule-repeat-days-trigger {
@@ -474,8 +474,8 @@ textarea:focus {
 }
 
 #sidebarMenuBtn svg {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
 }
 
 .icon-btn:hover {
