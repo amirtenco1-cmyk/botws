@@ -109,6 +109,8 @@ Project ini sudah disediakan konfigurasi Railway dalam file `railway.json`.
 
 	`PORT` tidak perlu diset manual kerana Railway akan inject otomatis.
 
+5. Deploy. `nixpacks.toml` sudah sediakan binary sistem `zip` dan `unzip` (untuk command `.zip`/`.unzip`) supaya Railway/Nixpacks install sekali semasa build — tidak perlu setting tambahan.
+
 5. Deploy.
 
 ## Troubleshooting
