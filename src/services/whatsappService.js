@@ -478,6 +478,52 @@ class WhatsAppService {
     this.lastConnectionNotificationAt = 0;
     this.connectionNotificationCooldownMs = Number(process.env.WA_CONNECTION_NOTIFY_COOLDOWN_MS || 60000);
     this.extractedTextStorage = new Map();
+    this.recentMessageCache = new Map();
+    this.recentMessageCacheWindowMs = Number(process.env.WA_RECENT_MESSAGE_CACHE_WINDOW_MS || 15 * 60 * 1000);
+  }
+
+  makeRecentMessageCacheKey(chatId, messageId) {
+    const chat = String(chatId || '').trim();
+    const id = String(messageId || '').trim();
+    if (!chat || !id) return '';
+    return `${chat}|${id}`;
+  }
+
+  cacheRecentMessage(chatId, message) {
+    const cacheKey = this.makeRecentMessageCacheKey(chatId, message?.key?.id);
+    if (!cacheKey || !message?.message) return;
+
+    this.recentMessageCache.set(cacheKey, {
+      message: message.message,
+      pushName: message.pushName || '',
+      messageTimestamp: message.messageTimestamp,
+      participant: message.key?.participant || '',
+      cachedAt: Date.now(),
+    });
+
+    if (this.recentMessageCache.size > 5000) {
+      const now = Date.now();
+      for (const [storedKey, entry] of this.recentMessageCache.entries()) {
+        if ((now - entry.cachedAt) > this.recentMessageCacheWindowMs) {
+          this.recentMessageCache.delete(storedKey);
+        }
+      }
+    }
+  }
+
+  getRecentMessage(chatId, messageId) {
+    const cacheKey = this.makeRecentMessageCacheKey(chatId, messageId);
+    if (!cacheKey) return null;
+
+    const entry = this.recentMessageCache.get(cacheKey);
+    if (!entry) return null;
+
+    if ((Date.now() - entry.cachedAt) > this.recentMessageCacheWindowMs) {
+      this.recentMessageCache.delete(cacheKey);
+      return null;
+    }
+
+    return entry;
   }
 
   makeIncomingMessageDedupKey(chatId, key) {
@@ -1107,6 +1153,8 @@ class WhatsAppService {
 
       const chatId = message.key?.remoteJid;
       if (!chatId) continue;
+
+      this.cacheRecentMessage(chatId, message);
 
       if (!this.shouldProcessIncomingMessage(chatId, message.key)) {
         continue;
@@ -2874,7 +2922,8 @@ class WhatsAppService {
 
   async saveDeletedMessage(chatId, messageId, key) {
     try {
-      const original = await this.store?.loadMessage?.(chatId, messageId);
+      const cached = this.getRecentMessage(chatId, messageId);
+      const original = cached || (await this.store?.loadMessage?.(chatId, messageId));
       if (!original?.message) return;
 
       const content = normalizeMessageContent(original.message) || original.message;
