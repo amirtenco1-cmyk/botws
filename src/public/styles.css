@@ -226,8 +226,9 @@ textarea:focus {
 .brand-mark {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
-  background: #25d366;
+  border-radius: 0;
+  background: none;
+  border: none;
   color: var(--primary-foreground);
   display: flex;
   align-items: center;
