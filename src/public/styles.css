@@ -2770,104 +2770,6 @@ tbody tr:hover {
   letter-spacing: 0.01em;
 }
 
-.command-row-parent .command-name {
-  color: var(--foreground);
-}
-
-.command-tree-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  margin-right: 8px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--card) 94%, transparent);
-  color: var(--muted-foreground);
-  cursor: pointer;
-  vertical-align: middle;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-
-.command-tree-toggle:hover {
-  color: var(--primary);
-  background: var(--primary-soft);
-  transform: translateY(-1px);
-}
-
-.command-tree-toggle:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-.command-tree-chevron {
-  width: 14px;
-  height: 14px;
-  transition: transform var(--motion-fast) ease;
-}
-
-.command-tree-toggle[aria-expanded="false"] .command-tree-chevron {
-  transform: rotate(90deg);
-}
-
-.command-row-child td:first-child {
-  padding-left: 30px;
-}
-
-.command-tree-branch {
-  position: relative;
-  display: inline-block;
-  width: 22px;
-  height: 1px;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-
-.command-tree-branch::before {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: -14px;
-  width: 1px;
-  height: 21px;
-  background: color-mix(in srgb, var(--border) 90%, transparent);
-}
-
-.command-tree-branch::after {
-  content: '';
-  position: absolute;
-  left: 4px;
-  top: 7px;
-  width: 12px;
-  height: 1px;
-  background: color-mix(in srgb, var(--border) 90%, transparent);
-}
-
-.command-row-child-last .command-tree-branch::before {
-  height: 14px;
-}
-
-.command-row-child[hidden] {
-  display: none;
-}
-
-.command-row-parent:hover,
-.command-row-child:hover {
-  background: color-mix(in srgb, var(--primary-soft) 72%, transparent);
-}
-
-.command-row-parent td {
-  background: color-mix(in srgb, var(--card) 94%, transparent);
-}
-
-.command-row-parent.is-collapsed td {
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-  border-bottom-left-radius: 10px;
-  border-bottom-right-radius: 10px;
-}
-
 .command-action-cell {
   min-width: 170px;
   white-space: nowrap;
@@ -2882,15 +2784,7 @@ tbody tr:hover {
   font-size: 0.8125rem;
   line-height: 1.2;
   font-weight: 500;
-  color: color-mix(in srgb, var(--text) 72%, transparent);
-}
-
-.command-source-built-in {
-  color: #8b1e3f;
-}
-
-.command-source-custom {
-  color: #1f8f4f;
+  color: var(--muted-foreground);
 }
 
 .command-detail-trigger {

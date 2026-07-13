@@ -917,148 +917,33 @@
                       </thead>
                       <tbody id="command-table-body">
                         <% const builtInCommandTriggers = new Set(['.schedule', '.schedulelist', '.scheduledelete', '.sch', '.schlist', '.schdel', '.vv', '.sticker', '.s', '.zip', '.unzip', '.pdf2txt', '.maketxt', '.qrcode', '.imagetopdf', '.img2pdf']); %>
-                        <tr class="command-row command-row-parent" data-tree-group="schedule">
-                          <td class="command-name-cell">
-                            <button type="button" class="command-tree-toggle" data-tree-toggle="schedule" aria-expanded="true" aria-controls="tree-schedule-children" aria-label="Collapse .sch family">
-                              <svg class="command-tree-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="M9 6l6 6-6 6"></path>
-                              </svg>
-                            </button>
-                            <span class="command-name">.sch</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell">
-                            <span class="muted">Editable via modal</span>
-                          </td>
-                          <td class="command-action-cell">
-                            <button type="button" class="btn btn-ghost btn-sm btn-edit-builtin-command" data-builtin-command="sch">Edit</button>
-                          </td>
-                        </tr>
-
-                        <tr class="command-row command-row-child" data-tree-parent="schedule" id="tree-schedule-children-schlist">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.schlist</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell">
-                            <span class="muted">Editable via modal</span>
-                          </td>
-                          <td class="command-action-cell">
-                            <button type="button" class="btn btn-ghost btn-sm btn-edit-builtin-command" data-builtin-command="schlist">Edit</button>
-                          </td>
-                        </tr>
-
-                        <tr class="command-row command-row-child command-row-child-last" data-tree-parent="schedule" id="tree-schedule-children-schdel">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.schdel</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell">
-                            <span class="muted">Editable via modal</span>
-                          </td>
-                          <td class="command-action-cell">
-                            <button type="button" class="btn btn-ghost btn-sm btn-edit-builtin-command" data-builtin-command="schdel">Edit</button>
-                          </td>
-                        </tr>
-
+                        <% const builtInCommandRows = [
+                          { name: '.sch', detail: 'Editable via modal', editKey: 'sch' },
+                          { name: '.schlist', detail: 'Editable via modal', editKey: 'schlist' },
+                          { name: '.schdel', detail: 'Editable via modal', editKey: 'schdel' },
+                          { name: '.vv', detail: 'Editable via modal', editKey: 'vv' },
+                          { name: '.sticker', detail: 'Editable via modal', editKey: 'sticker' },
+                          { name: '.zip', detail: 'Reply fail → compress jadi .zip' },
+                          { name: '.unzip', detail: 'Reply fail .zip → extract semua fail' },
+                          { name: '.pdf2txt', detail: 'Reply fail PDF → tukar kepada teks' },
+                          { name: '.maketxt <teks>', detail: 'Tukar teks/reply mesej jadi fail .txt' },
+                          { name: '.qrcode <teks/link>', detail: 'Jana QR Code dari teks atau URL' },
+                          { name: '.imagetopdf', detail: 'Reply gambar → OCR extract text → convert ke PDF' },
+                        ]; %>
+                        <% builtInCommandRows.forEach((row) => { %>
                         <tr class="command-row">
-                          <td class="command-name-cell"><span class="command-name">.vv</span></td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell">
-                            <span class="muted">Editable via modal</span>
-                          </td>
+                          <td class="command-name-cell"><span class="command-name"><%= row.name %></span></td>
+                          <td><span class="command-source">Built-in</span></td>
+                          <td class="command-detail-cell"><span class="muted"><%= row.detail %></span></td>
                           <td class="command-action-cell">
-                            <button type="button" class="btn btn-ghost btn-sm btn-edit-builtin-command" data-builtin-command="vv">Edit</button>
+                            <% if (row.editKey) { %>
+                            <button type="button" class="btn btn-ghost btn-sm btn-edit-builtin-command" data-builtin-command="<%= row.editKey %>">Edit</button>
+                            <% } else { %>
+                            <span class="muted">—</span>
+                            <% } %>
                           </td>
                         </tr>
-
-                        <tr class="command-row">
-                          <td class="command-name-cell"><span class="command-name">.sticker</span></td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell">
-                            <span class="muted">Editable via modal</span>
-                          </td>
-                          <td class="command-action-cell">
-                            <button type="button" class="btn btn-ghost btn-sm btn-edit-builtin-command" data-builtin-command="sticker">Edit</button>
-                          </td>
-                        </tr>
-
-                        <!-- File Tools group -->
-                        <tr class="command-row command-row-parent" data-tree-group="filetools">
-                          <td class="command-name-cell">
-                            <button type="button" class="command-tree-toggle" data-tree-toggle="filetools" aria-expanded="true" aria-controls="tree-filetools-children" aria-label="Collapse file tools family">
-                              <svg class="command-tree-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="M9 6l6 6-6 6"></path>
-                              </svg>
-                            </button>
-                            <span class="command-name">.zip / .unzip / .pdf2txt / .imagetopdf / .maketxt / .qrcode</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">File tools</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
-
-                        <tr class="command-row command-row-child" data-tree-parent="filetools" id="tree-filetools-children-zip">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.zip</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">Reply fail → compress jadi .zip</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
-
-                        <tr class="command-row command-row-child" data-tree-parent="filetools" id="tree-filetools-children-unzip">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.unzip</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">Reply fail .zip → extract semua fail</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
-
-                        <tr class="command-row command-row-child" data-tree-parent="filetools" id="tree-filetools-children-pdf2txt">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.pdf2txt</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">Reply fail PDF → tukar kepada teks</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
-
-                        <tr class="command-row command-row-child" data-tree-parent="filetools" id="tree-filetools-children-maketxt">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.maketxt &lt;teks&gt;</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">Tukar teks/reply mesej jadi fail .txt</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
-
-                        <tr class="command-row command-row-child" data-tree-parent="filetools" id="tree-filetools-children-qrcode">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.qrcode &lt;teks/link&gt;</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">Jana QR Code dari teks atau URL</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
-
-                        <tr class="command-row command-row-child command-row-child-last" data-tree-parent="filetools" id="tree-filetools-children-imagetopdf">
-                          <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
-                            <span class="command-name">.imagetopdf</span>
-                          </td>
-                          <td><span class="command-source command-source-built-in">Built-in</span></td>
-                          <td class="command-detail-cell"><span class="muted">Reply gambar → OCR extract text → convert ke PDF</span></td>
-                          <td class="command-action-cell"><span class="muted">—</span></td>
-                        </tr>
+                        <% }) %>
 
                         <% const filteredCustomCommands = customCommands.filter((item) => !builtInCommandTriggers.has(String(item.trigger || '').trim().toLowerCase())); %>
 
@@ -1067,33 +952,12 @@
                           <td colspan="4" class="muted command-empty-cell">No custom commands yet (built-in commands are listed above)</td>
                         </tr>
                         <% } else { %>
-                        <tr class="command-row command-row-parent" data-tree-group="custom">
-                          <td class="command-name-cell">
-                            <button type="button" class="command-tree-toggle" data-tree-toggle="custom" data-tree-label="Custom Commands" aria-expanded="true" aria-controls="tree-custom-children" aria-label="Collapse Custom Commands">
-                              <svg class="command-tree-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                                <path d="M9 6l6 6-6 6"></path>
-                              </svg>
-                            </button>
-                            <span class="command-name">Custom Commands</span>
-                          </td>
-                          <td><span class="command-source command-source-custom">Custom</span></td>
-                          <td class="command-detail-cell">
-                            <span class="muted">Expandable custom command set</span>
-                          </td>
-                          <td class="command-action-cell">
-                            <span class="muted">—</span>
-                          </td>
-                        </tr>
-
                         <% filteredCustomCommands.forEach((item) => { %>
-                        <% const popoverId = `command-detail-${String(item.trigger || '').replace(/[^a-z0-9_-]+/gi, '-')}`; %>
-                        <% const customChildId = `tree-custom-children-${String(item.trigger || '').replace(/[^a-z0-9_-]+/gi, '-')}`; %>
-                        <tr class="command-row command-row-child" data-tree-parent="custom" id="<%= customChildId %>" data-trigger="<%= item.trigger %>">
+                        <tr class="command-row" data-trigger="<%= item.trigger %>">
                           <td class="command-name-cell">
-                            <span class="command-tree-branch" aria-hidden="true"></span>
                             <span class="command-name"><%= item.trigger %></span>
                           </td>
-                          <td><span class="command-source command-source-custom">Custom</span></td>
+                          <td><span class="command-source">Custom</span></td>
                           <td class="command-detail-cell command-content-cell">
                             <button type="button" class="command-detail-trigger" data-trigger="<%= item.trigger %>" aria-label="View details for <%= item.trigger %>">
                               <svg class="command-detail-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

@@ -5118,24 +5118,6 @@ if (commandDetailModal) {
   });
 }
 
-document.querySelectorAll('.command-tree-toggle[data-tree-toggle]').forEach((toggleBtn) => {
-  toggleBtn.addEventListener('click', () => {
-    const group = toggleBtn.dataset.treeToggle;
-    const groupLabel = String(toggleBtn.dataset.treeLabel || 'command group').trim();
-    const expanded = toggleBtn.getAttribute('aria-expanded') !== 'false';
-    const nextExpanded = !expanded;
-    toggleBtn.setAttribute('aria-expanded', String(nextExpanded));
-    toggleBtn.setAttribute('aria-label', nextExpanded ? `Collapse ${groupLabel}` : `Expand ${groupLabel}`);
-    const parentRow = toggleBtn.closest('.command-row-parent');
-    if (parentRow) {
-      parentRow.classList.toggle('is-collapsed', !nextExpanded);
-    }
-    document.querySelectorAll(`[data-tree-parent="${group}"]`).forEach((row) => {
-      row.hidden = !nextExpanded;
-    });
-  });
-});
-
 const customCommandEditModal = document.getElementById('customCommandEditModal');
 const closeCustomCommandEditModalBtn = document.getElementById('closeCustomCommandEditModal');
 const customCommandEditOriginalTriggerInput = document.getElementById('customCommandEditOriginalTrigger');
