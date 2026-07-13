@@ -496,6 +496,16 @@ function createDashboardRouter(whatsappService) {
     return res.json(waState);
   });
 
+  router.post('/api/whatsapp/refresh-qr', async (req, res) => {
+    try {
+      const state = await whatsappService.refreshQrCode();
+      return res.json(state);
+    } catch (error) {
+      const status = error.message === 'WhatsApp is already connected' ? 409 : 400;
+      return res.status(status).json({ error: error.message || 'Failed to refresh QR code' });
+    }
+  });
+
   router.get('/api/chat-response-settings', (req, res) => {
     return res.json(chatResponseSettingsStore.getSettings());
   });
@@ -621,13 +631,23 @@ function createDashboardRouter(whatsappService) {
       const payload = req.body || {};
       const hasOwner = Object.prototype.hasOwnProperty.call(payload, 'ownerNumber');
       const hasMode = Object.prototype.hasOwnProperty.call(payload, 'commandMode');
+      const hasTimeZone = Object.prototype.hasOwnProperty.call(payload, 'timeZone');
 
-      if (!hasOwner && !hasMode) {
-        return res.status(400).json({ error: 'ownerNumber or commandMode is required' });
+      if (!hasOwner && !hasMode && !hasTimeZone) {
+        return res.status(400).json({ error: 'ownerNumber, commandMode, or timeZone is required' });
       }
 
       if (hasMode && !['public', 'private'].includes(String(payload.commandMode || '').trim().toLowerCase())) {
         return res.status(400).json({ error: 'commandMode must be public or private' });
+      }
+
+      if (hasTimeZone) {
+        const rawTimeZone = String(payload.timeZone || '').trim();
+        try {
+          new Intl.DateTimeFormat('en-GB', { timeZone: rawTimeZone || 'UTC' }).format(new Date());
+        } catch (error) {
+          return res.status(400).json({ error: 'timeZone must be a valid IANA timezone (example: Asia/Kuala_Lumpur)' });
+        }
       }
 
       const updated = accessControlStore.updateSettings(payload);

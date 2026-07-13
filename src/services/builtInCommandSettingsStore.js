@@ -65,6 +65,23 @@ function normalizeStickerUsageHelpText(value) {
   return text;
 }
 
+function normalizeCtaUrlValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) {
+    return raw;
+  }
+
+  // Accept domain-style inputs and normalize them to absolute HTTPS URLs.
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(raw)) {
+    return `https://${raw}`;
+  }
+
+  // Treat other non-empty values as relative paths for this app.
+  return `/${raw.replace(/^\/+/, '')}`;
+}
+
 function normalizeInteractiveButtons(value) {
   const sourceButtons = Array.isArray(value) ? value : [];
   const buttons = [];
@@ -76,7 +93,7 @@ function normalizeInteractiveButtons(value) {
     if (!item.name && Object.prototype.hasOwnProperty.call(item, 'displayText')) {
       const displayText = String(item.displayText || '').trim();
       if (!displayText) continue;
-      const url = String(item.url || '').trim();
+      const url = normalizeCtaUrlValue(item.url);
       buttons.push({
         name: 'cta_url',
         buttonParamsJson: JSON.stringify({
@@ -105,6 +122,15 @@ function normalizeInteractiveButtons(value) {
 
     if (!params || typeof params !== 'object') {
       params = {};
+    }
+
+    if (name === 'cta_url') {
+      const normalizedUrl = normalizeCtaUrlValue(params.url);
+      params = {
+        ...params,
+        url: normalizedUrl,
+        merchant_url: normalizeCtaUrlValue(params.merchant_url || normalizedUrl) || normalizedUrl,
+      };
     }
 
     buttons.push({

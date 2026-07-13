@@ -854,6 +854,35 @@ html.has-route-hash .page[data-page] {
   cursor: not-allowed;
 }
 
+[data-theme="dark"] .linked-method-tabs,
+:root:not([data-theme]) .linked-method-tabs {
+  background: #141f30;
+  border-color: #31415b;
+}
+
+[data-theme="dark"] .linked-method-tabs .method-tab,
+:root:not([data-theme]) .linked-method-tabs .method-tab {
+  color: #b7c6db;
+}
+
+[data-theme="dark"] .linked-method-tabs .method-tab:hover,
+:root:not([data-theme]) .linked-method-tabs .method-tab:hover {
+  background: rgba(91, 124, 255, 0.14);
+  color: #e7efff;
+}
+
+[data-theme="dark"] .linked-method-tabs .method-tab.active,
+:root:not([data-theme]) .linked-method-tabs .method-tab.active {
+  background: #5b7cff;
+  color: #f8fbff;
+  box-shadow: 0 0 0 1px rgba(91, 124, 255, 0.45), 0 6px 14px rgba(24, 38, 68, 0.5);
+}
+
+[data-theme="dark"] .linked-method-tabs .method-tab:disabled,
+:root:not([data-theme]) .linked-method-tabs .method-tab:disabled {
+  opacity: 0.38;
+}
+
 .schedule-section-dropdown {
   position: relative;
   display: inline-flex;
@@ -1349,13 +1378,15 @@ a.vending-overview-card {
 }
 
 .qr {
-  width: clamp(220px, 40vw, 280px);
-  height: clamp(220px, 40vw, 280px);
-  background: var(--card);
+  width: clamp(240px, 42vw, 320px);
+  height: clamp(240px, 42vw, 320px);
+  background: #ffffff;
   border-radius: 10px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid color-mix(in srgb, var(--border) 84%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background) 40%, transparent);
+  object-fit: contain;
+  image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
 
@@ -4116,9 +4147,9 @@ tbody tr:hover {
   }
 
   .qr {
-    width: 160px;
-    height: 160px;
-    padding: 6px;
+    width: clamp(220px, 68vw, 300px);
+    height: clamp(220px, 68vw, 300px);
+    padding: 10px;
   }
 
   .linked-phone-wrap {

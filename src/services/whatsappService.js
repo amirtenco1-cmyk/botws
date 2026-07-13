@@ -3,10 +3,13 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const qrcode = require('qrcode');
+const pdfParse = require('pdf-parse');
 const pino = require('pino');
 const baileys = require('atexovi-baileys');
 const ytSearch = require('yt-search');
 const ffmpegPath = require('ffmpeg-static');
+const PDFDocument = require('pdfkit');
+const Tesseract = require('tesseract.js');
 
 const customCommandStore = require('./customCommandStore');
 const deletedMessageStore = require('./deletedMessageStore');
@@ -447,6 +450,8 @@ class WhatsAppService {
   constructor() {
     this.sock = null;
     this.qrCodeDataUrl = null;
+    this.qrCodeUpdatedAt = 0;
+    this.qrCodeVersion = 0;
     this.ready = false;
     this.lastStatus = 'Initializing...';
     this.reconnectTimer = null;
@@ -466,6 +471,132 @@ class WhatsAppService {
     };
     this.personalFallbackLastReplyByChat = new Map();
     this.personalFallbackCooldownMs = Number(process.env.WA_PERSONAL_FALLBACK_COOLDOWN_MS || 15000);
+    this.processedIncomingMessages = new Map();
+    this.incomingMessageDedupWindowMs = Number(process.env.WA_INCOMING_DEDUP_WINDOW_MS || 120000);
+    this.processedCommandSignatures = new Map();
+    this.commandDedupWindowMs = Number(process.env.WA_COMMAND_DEDUP_WINDOW_MS || 8000);
+    this.lastConnectionNotificationAt = 0;
+    this.connectionNotificationCooldownMs = Number(process.env.WA_CONNECTION_NOTIFY_COOLDOWN_MS || 60000);
+    this.extractedTextStorage = new Map();
+  }
+
+  makeIncomingMessageDedupKey(chatId, key) {
+    const remote = String(chatId || '').trim();
+    const id = String(key?.id || '').trim();
+    const participant = String(key?.participant || '').trim();
+    const fromMeFlag = key?.fromMe ? '1' : '0';
+    if (!remote || !id) return '';
+    return `${remote}|${participant}|${fromMeFlag}|${id}`;
+  }
+
+  shouldProcessIncomingMessage(chatId, key) {
+    const dedupKey = this.makeIncomingMessageDedupKey(chatId, key);
+    if (!dedupKey) return true;
+
+    const now = Date.now();
+    const previous = this.processedIncomingMessages.get(dedupKey) || 0;
+    if (previous && (now - previous) < this.incomingMessageDedupWindowMs) {
+      return false;
+    }
+
+    this.processedIncomingMessages.set(dedupKey, now);
+
+    if (this.processedIncomingMessages.size > 5000) {
+      for (const [storedKey, timestamp] of this.processedIncomingMessages.entries()) {
+        if ((now - timestamp) > this.incomingMessageDedupWindowMs) {
+          this.processedIncomingMessages.delete(storedKey);
+        }
+      }
+    }
+
+    return true;
+  }
+
+  getIncomingCommandSignature(text, interactiveSelectionId) {
+    const normalizedText = String(text || '').trim().toLowerCase();
+    if (normalizedText.startsWith('.') || normalizedText.startsWith('!')) {
+      return `cmd:${normalizedText}`;
+    }
+
+    const selection = String(interactiveSelectionId || '').trim().toLowerCase();
+    if (selection) {
+      return `btn:${selection}`;
+    }
+
+    return '';
+  }
+
+  shouldProcessCommandSignature(chatId, key, signature) {
+    const normalizedSignature = String(signature || '').trim();
+    if (!normalizedSignature) return true;
+
+    const sender = String(key?.participant || key?.remoteJid || '').trim().toLowerCase();
+    const chat = String(chatId || '').trim().toLowerCase();
+    if (!chat) return true;
+
+    const dedupKey = `${chat}|${sender}|${normalizedSignature}`;
+    const now = Date.now();
+    const previous = this.processedCommandSignatures.get(dedupKey) || 0;
+    if (previous && (now - previous) < this.commandDedupWindowMs) {
+      return false;
+    }
+
+    this.processedCommandSignatures.set(dedupKey, now);
+
+    if (this.processedCommandSignatures.size > 5000) {
+      for (const [storedKey, timestamp] of this.processedCommandSignatures.entries()) {
+        if ((now - timestamp) > this.commandDedupWindowMs) {
+          this.processedCommandSignatures.delete(storedKey);
+        }
+      }
+    }
+
+    return true;
+  }
+
+  async refreshQrCode() {
+    if (this.ready) {
+      throw new Error('WhatsApp is already connected');
+    }
+
+    this.lastStatus = 'Refreshing QR session...';
+    this.qrCodeDataUrl = null;
+    this.qrCodeUpdatedAt = 0;
+    this.pairingCode = null;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    const socketToClose = this.sock;
+    this.sock = null;
+    this.isInitializing = false;
+
+    try {
+      if (socketToClose) {
+        socketToClose.end(new Error('manual_qr_refresh'));
+      }
+    } catch (error) {
+      console.warn('[WA] Failed to close socket during manual QR refresh:', error.message);
+    }
+
+    await this.init();
+    await this.waitForQrOrReady();
+    return this.getConnectionState();
+  }
+
+  async waitForQrOrReady() {
+    const timeoutMs = Math.max(1000, Number(process.env.WA_QR_REFRESH_WAIT_MS || 12000));
+    const pollMs = 250;
+    const startedAt = Date.now();
+
+    while ((Date.now() - startedAt) < timeoutMs) {
+      if (this.ready || this.qrCodeDataUrl) {
+        return;
+      }
+      await sleep(pollMs);
+    }
   }
 
   shouldSendPersonalFallback(chatId) {
@@ -619,14 +750,16 @@ class WhatsAppService {
 
       if (qr) {
         this.qrCodeDataUrl = await qrcode.toDataURL(qr, {
-          errorCorrectionLevel: 'H',
-          margin: 2,
-          scale: 8,
+          errorCorrectionLevel: 'M',
+          margin: 1,
+          scale: 10,
           color: {
             dark: '#111111',
             light: '#FFFFFF',
           },
         });
+        this.qrCodeUpdatedAt = Date.now();
+        this.qrCodeVersion += 1;
         this.lastStatus = 'Scan QR from dashboard';
         this.ready = false;
         this.isInitializing = false;
@@ -643,6 +776,7 @@ class WhatsAppService {
         this.isInitializing = false;
         this.reconnectAttempts = 0;
         this.qrCodeDataUrl = null;
+        this.qrCodeUpdatedAt = 0;
         this.pairingCode = null;
         if (!wasReady) {
           console.log('[WA] Client ready');
@@ -679,6 +813,7 @@ class WhatsAppService {
             console.error('[WA] Failed to reset auth:', error.message);
           }
           this.qrCodeDataUrl = null;
+          this.qrCodeUpdatedAt = 0;
           this.pairingCode = null;
           this.scheduleReinitialize(isAuthInvalid ? 'auth_invalid' : 'logged_out');
           return;
@@ -756,6 +891,8 @@ class WhatsAppService {
       ready: this.ready,
       status: this.lastStatus,
       qrCodeDataUrl: this.qrCodeDataUrl,
+      qrCodeUpdatedAt: this.qrCodeUpdatedAt,
+      qrCodeVersion: this.qrCodeVersion,
       pairingCode: this.pairingCode,
       connectedAccount: {
         jid,
@@ -924,24 +1061,38 @@ class WhatsAppService {
       return;
     }
 
+    const nowMs = Date.now();
+    if ((nowMs - this.lastConnectionNotificationAt) < this.connectionNotificationCooldownMs) {
+      return;
+    }
+
     try {
       const ownerJid = normalizePersonalJid(this.sock.user.id || '');
       if (!ownerJid) {
         return;
       }
 
-      const timestamp = new Date().toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
+      const settings = accessControlStore.getSettings();
+      const selectedTimeZone = String(settings?.timeZone || 'Asia/Kuala_Lumpur').trim() || 'Asia/Kuala_Lumpur';
+      const now = new Date();
+      const timeText = new Intl.DateTimeFormat('en-GB', {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
-      });
+        hour12: false,
+        timeZone: selectedTimeZone,
+      }).format(now);
+      const dateText = new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        timeZone: selectedTimeZone,
+      }).format(now);
 
-      const notificationMessage = `✅ Bot connected successfully!\n\nTimestamp: ${timestamp}`;
+      const notificationMessage = `Bot connected successfully 🤖\n\nTime : ${timeText}\nDate : ${dateText}\n\nTime zone : ${selectedTimeZone}`;
 
       await this.sock.sendMessage(ownerJid, { text: notificationMessage });
+      this.lastConnectionNotificationAt = nowMs;
       console.log('[WA] Connection notification sent to owner');
     } catch (error) {
       console.error('[WA] Error sending connection notification:', error.message);
@@ -957,17 +1108,27 @@ class WhatsAppService {
       const chatId = message.key?.remoteJid;
       if (!chatId) continue;
 
+      if (!this.shouldProcessIncomingMessage(chatId, message.key)) {
+        continue;
+      }
+
       const content = normalizeMessageContent(message.message) || message.message;
       const interactiveSelectionId = this.extractInteractiveSelectionId(content);
       const text = this.extractMessageText(content);
       const isCommandText = text.trim().startsWith('.') || text.trim().startsWith('!');
+      const commandSignature = this.getIncomingCommandSignature(text, interactiveSelectionId);
+      if (!this.shouldProcessCommandSignature(chatId, message.key, commandSignature)) {
+        continue;
+      }
       const isFromMe = Boolean(message.key?.fromMe);
       const isSelfCommandAllowed = this.isSelfCommandMessageAllowed(chatId, message.key, isCommandText);
       if (isFromMe && !isSelfCommandAllowed) continue;
 
       const isSelfCommandMessage = isFromMe && isSelfCommandAllowed;
+      const isChatResponseEnabled = chatResponseSettingsStore.isResponseEnabledForChat(chatId);
 
-      if (!chatResponseSettingsStore.isResponseEnabledForChat(chatId)) {
+      // Keep command flow available even when auto-response is disabled.
+      if (!isChatResponseEnabled && !isCommandText && !interactiveSelectionId) {
         continue;
       }
 
@@ -995,6 +1156,12 @@ class WhatsAppService {
 
       if (text.trim() === '.vv' || text.trim() === '!vv') {
         await this.handleViewOnceCommand(chatId, content);
+        continue;
+      }
+
+      // Handle image to PDF button responses
+      if (text.trim().startsWith('.imagetopdf_')) {
+        await this.handleImageToPdfButtonResponse(chatId, text.trim());
         continue;
       }
 
@@ -1284,7 +1451,614 @@ class WhatsAppService {
       return true;
     }
 
+    if (command === '.timezone' || command === '!timezone' || command === '.tz' || command === '!tz') {
+      await this.handleTimeZoneCommand(chatId, normalized);
+      return true;
+    }
+
+    if (command === '.zip' || command === '!zip') {
+      await this.handleZipCommand(chatId, content);
+      return true;
+    }
+
+    if (command === '.unzip' || command === '!unzip') {
+      await this.handleUnzipCommand(chatId, content);
+      return true;
+    }
+
+    if (command === '.pdf2txt' || command === '!pdf2txt') {
+      await this.handlePdfToTextCommand(chatId, content);
+      return true;
+    }
+
+    if (command === '.maketxt' || command === '!maketxt') {
+      await this.handleMakeTxtCommand(chatId, normalized);
+      return true;
+    }
+
+    if (command === '.qrcode' || command === '!qrcode' || command === '.qr' || command === '!qr') {
+      await this.handleQrCodeCommand(chatId, normalized);
+      return true;
+    }
+
+    if (command === '.imagetopdf' || command === '!imagetopdf' || command === '.img2pdf' || command === '!img2pdf') {
+      await this.handleImageToPdfCommand(chatId, content);
+      return true;
+    }
+
     return false;
+  }
+
+  normalizeToolFileName(value, fallbackName) {
+    const fallback = String(fallbackName || 'file.bin');
+    const raw = String(value || '').trim();
+    if (!raw) return fallback;
+
+    const sanitized = raw.replace(/[\\/:*?"<>|]+/g, '-').trim();
+    const base = path.basename(sanitized);
+    return base || fallback;
+  }
+
+  resolveFileToolMedia(content, options = {}) {
+    const documentOnly = Boolean(options.documentOnly);
+    const quoted = content?.extendedTextMessage?.contextInfo?.quotedMessage || null;
+    const sources = [quoted, content];
+
+    for (const source of sources) {
+      if (!source || typeof source !== 'object') continue;
+
+      if (source.documentMessage) {
+        return {
+          media: source.documentMessage,
+          type: 'document',
+          fileName: source.documentMessage.fileName || '',
+          mimeType: source.documentMessage.mimetype || '',
+        };
+      }
+
+      if (documentOnly) continue;
+
+      if (source.imageMessage) {
+        return {
+          media: source.imageMessage,
+          type: 'image',
+          fileName: source.imageMessage.fileName || '',
+          mimeType: source.imageMessage.mimetype || 'image/jpeg',
+        };
+      }
+
+      if (source.videoMessage) {
+        return {
+          media: source.videoMessage,
+          type: 'video',
+          fileName: source.videoMessage.fileName || '',
+          mimeType: source.videoMessage.mimetype || 'video/mp4',
+        };
+      }
+
+      if (source.audioMessage) {
+        return {
+          media: source.audioMessage,
+          type: 'audio',
+          fileName: source.audioMessage.fileName || '',
+          mimeType: source.audioMessage.mimetype || 'audio/ogg',
+        };
+      }
+
+      if (source.stickerMessage) {
+        return {
+          media: source.stickerMessage,
+          type: 'sticker',
+          fileName: source.stickerMessage.fileName || 'sticker.webp',
+          mimeType: source.stickerMessage.mimetype || 'image/webp',
+        };
+      }
+    }
+
+    return null;
+  }
+
+  getFallbackFileNameByType(type) {
+    if (type === 'image') return 'image.jpg';
+    if (type === 'video') return 'video.mp4';
+    if (type === 'audio') return 'audio.ogg';
+    if (type === 'sticker') return 'sticker.webp';
+    return 'file.bin';
+  }
+
+  async createFileToolTempDir(prefix = 'filetool-') {
+    await fs.promises.mkdir(tempDir, { recursive: true });
+    return fs.promises.mkdtemp(path.join(tempDir, prefix));
+  }
+
+  async listFilesRecursive(rootDir) {
+    const files = [];
+    const stack = [''];
+
+    while (stack.length) {
+      const relative = stack.pop();
+      const currentPath = path.join(rootDir, relative);
+      const entries = await fs.promises.readdir(currentPath, { withFileTypes: true });
+
+      for (const entry of entries) {
+        const entryRelative = path.join(relative, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(entryRelative);
+          continue;
+        }
+
+        files.push(entryRelative);
+      }
+    }
+
+    return files;
+  }
+
+  async handleZipCommand(chatId, content) {
+    if (!this.sock) return;
+
+    const target = this.resolveFileToolMedia(content, { documentOnly: false });
+    if (!target) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Reply mana-mana media/file dengan .zip untuk compress menjadi ZIP.',
+      });
+      return;
+    }
+
+    const workDir = await this.createFileToolTempDir('zip-');
+
+    try {
+      const stream = await downloadContentFromMessage(target.media, target.type);
+      const buffer = await this.streamToBuffer(stream);
+      if (!buffer.length) {
+        throw new Error('Media kosong atau gagal dimuat turun.');
+      }
+
+      const sourceName = this.normalizeToolFileName(
+        target.fileName,
+        this.getFallbackFileNameByType(target.type)
+      );
+      const sourcePath = path.join(workDir, sourceName);
+      await fs.promises.writeFile(sourcePath, buffer);
+
+      const zipBase = path.parse(sourceName).name || 'archive';
+      const zipName = `${zipBase}.zip`;
+      const zipPath = path.join(workDir, zipName);
+
+      await execFileAsync('zip', ['-j', zipPath, sourcePath], {
+        windowsHide: true,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+
+      const zipBuffer = await fs.promises.readFile(zipPath);
+      await this.sock.sendMessage(chatId, {
+        document: zipBuffer,
+        fileName: zipName,
+        mimetype: 'application/zip',
+        caption: `✅ ZIP siap: ${zipName}`,
+      });
+    } catch (error) {
+      console.error('[WA] .zip error:', error.message);
+      await this.sock.sendMessage(chatId, { text: `Gagal proses .zip: ${error.message}` });
+    } finally {
+      await fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  async handleUnzipCommand(chatId, content) {
+    if (!this.sock) return;
+
+    const target = this.resolveFileToolMedia(content, { documentOnly: true });
+    if (!target) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Reply fail ZIP dengan .unzip untuk extract kandungan.',
+      });
+      return;
+    }
+
+    const sourceFileName = this.normalizeToolFileName(target.fileName, 'archive.zip');
+    const isZipName = sourceFileName.toLowerCase().endsWith('.zip');
+    const isZipMime = String(target.mimeType || '').toLowerCase().includes('zip');
+    if (!isZipName && !isZipMime) {
+      await this.sock.sendMessage(chatId, {
+        text: 'File ini bukan ZIP. Gunakan fail .zip untuk command .unzip.',
+      });
+      return;
+    }
+
+    const workDir = await this.createFileToolTempDir('unzip-');
+    const extractDir = path.join(workDir, 'extracted');
+
+    try {
+      const stream = await downloadContentFromMessage(target.media, 'document');
+      const zipBuffer = await this.streamToBuffer(stream);
+      if (!zipBuffer.length) {
+        throw new Error('ZIP kosong atau gagal dimuat turun.');
+      }
+
+      await fs.promises.mkdir(extractDir, { recursive: true });
+      const zipPath = path.join(workDir, sourceFileName);
+      await fs.promises.writeFile(zipPath, zipBuffer);
+
+      await execFileAsync('unzip', ['-o', zipPath, '-d', extractDir], {
+        windowsHide: true,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+
+      const files = await this.listFilesRecursive(extractDir);
+      if (!files.length) {
+        await this.sock.sendMessage(chatId, { text: 'ZIP berjaya dibuka, tetapi tiada fail di dalamnya.' });
+        return;
+      }
+
+      const limited = files.slice(0, 6);
+      await this.sock.sendMessage(chatId, {
+        text: `✅ ZIP extracted. Hantar ${limited.length}${files.length > limited.length ? ` daripada ${files.length}` : ''} fail pertama.`,
+      });
+
+      for (const relativePath of limited) {
+        const fullPath = path.join(extractDir, relativePath);
+        const fileBuffer = await fs.promises.readFile(fullPath);
+        const outputName = this.normalizeToolFileName(relativePath, 'file.bin');
+
+        await this.sock.sendMessage(chatId, {
+          document: fileBuffer,
+          fileName: outputName,
+          mimetype: 'application/octet-stream',
+        });
+      }
+    } catch (error) {
+      console.error('[WA] .unzip error:', error.message);
+      await this.sock.sendMessage(chatId, { text: `Gagal proses .unzip: ${error.message}` });
+    } finally {
+      await fs.promises.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  async handlePdfToTextCommand(chatId, content) {
+    if (!this.sock) return;
+
+    const target = this.resolveFileToolMedia(content, { documentOnly: true });
+    if (!target) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Reply fail PDF dengan .pdf2txt untuk extract text.',
+      });
+      return;
+    }
+
+    const sourceFileName = this.normalizeToolFileName(target.fileName, 'document.pdf');
+    const isPdfName = sourceFileName.toLowerCase().endsWith('.pdf');
+    const isPdfMime = String(target.mimeType || '').toLowerCase().includes('pdf');
+    if (!isPdfName && !isPdfMime) {
+      await this.sock.sendMessage(chatId, {
+        text: 'File ini bukan PDF. Gunakan fail .pdf untuk command .pdf2txt.',
+      });
+      return;
+    }
+
+    try {
+      const stream = await downloadContentFromMessage(target.media, 'document');
+      const pdfBuffer = await this.streamToBuffer(stream);
+      if (!pdfBuffer.length) {
+        throw new Error('PDF kosong atau gagal dimuat turun.');
+      }
+
+      const parsed = await pdfParse(pdfBuffer);
+      const extractedText = String(parsed?.text || '').replace(/\r/g, '').trim();
+      if (!extractedText) {
+        await this.sock.sendMessage(chatId, { text: 'PDF berjaya dibaca, tetapi tiada teks yang boleh diekstrak.' });
+        return;
+      }
+
+      const txtFileName = `${path.parse(sourceFileName).name || 'document'}.txt`;
+      const preview = extractedText.length > 700
+        ? `${extractedText.slice(0, 700)}...`
+        : extractedText;
+
+      await this.sock.sendMessage(chatId, {
+        text: `✅ PDF converted ke text. Preview:\n\n${preview}`,
+      });
+
+      await this.sock.sendMessage(chatId, {
+        document: Buffer.from(extractedText, 'utf8'),
+        fileName: txtFileName,
+        mimetype: 'text/plain',
+      });
+    } catch (error) {
+      console.error('[WA] .pdf2txt error:', error.message);
+      await this.sock.sendMessage(chatId, { text: `Gagal proses .pdf2txt: ${error.message}` });
+    }
+  }
+
+  async handleMakeTxtCommand(chatId, rawText) {
+    if (!this.sock) return;
+
+    const textBody = stripCommandPrefix(rawText);
+    if (!textBody) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Usage: .maketxt <isi teks>\nContoh: .maketxt Ini nota penting saya',
+      });
+      return;
+    }
+
+    const fileName = `note-${Date.now()}.txt`;
+    await this.sock.sendMessage(chatId, {
+      document: Buffer.from(textBody, 'utf8'),
+      fileName,
+      mimetype: 'text/plain',
+      caption: '✅ TXT file generated.',
+    });
+  }
+
+  async handleQrCodeCommand(chatId, rawText) {
+    if (!this.sock) return;
+
+    const payload = stripCommandPrefix(rawText);
+    if (!payload) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Usage: .qrcode <text atau URL>\nContoh: .qrcode https://example.com',
+      });
+      return;
+    }
+
+    try {
+      const qrBuffer = await qrcode.toBuffer(payload, {
+        type: 'png',
+        margin: 1,
+        scale: 10,
+        color: {
+          dark: '#111111',
+          light: '#FFFFFF',
+        },
+      });
+
+      await this.sock.sendMessage(chatId, {
+        image: qrBuffer,
+        caption: `✅ QR generated for: ${payload.slice(0, 120)}`,
+      });
+    } catch (error) {
+      console.error('[WA] .qrcode error:', error.message);
+      await this.sock.sendMessage(chatId, { text: `Gagal proses .qrcode: ${error.message}` });
+    }
+  }
+
+  async handleImageToPdfCommand(chatId, content) {
+    if (!this.sock) return;
+
+    const target = this.resolveFileToolMedia(content, { documentOnly: false });
+    if (!target || (target.type !== 'image' && target.type !== 'sticker')) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Kirim/reply gambar dengan .imagetopdf untuk extract text dan convert ke PDF.',
+      });
+      return;
+    }
+
+    try {
+      await this.sock.sendMessage(chatId, { text: '⏳ Processing image... extracting text menggunakan OCR...' });
+
+      // Download the image
+      const stream = await downloadContentFromMessage(target.media, target.type);
+      const imageBuffer = await this.streamToBuffer(stream);
+
+      if (!imageBuffer.length) {
+        throw new Error('Image kosong atau gagal dimuat turun.');
+      }
+
+      // Extract text from image using Tesseract OCR
+      const { data: { text: extractedText } } = await Tesseract.recognize(
+        imageBuffer,
+        'eng',
+        { logger: (m) => console.log('[OCR]', m.status, m.progress) }
+      );
+
+      if (!extractedText || extractedText.trim().length === 0) {
+        await this.sock.sendMessage(chatId, {
+          text: '❌ Tidak dapat menemukan teks dalam gambar. Pastikan gambar memiliki teks yang jelas.',
+        });
+        return;
+      }
+
+      // Store extracted text
+      this.extractedTextStorage.set(chatId, {
+        text: extractedText,
+        timestamp: Date.now(),
+      });
+
+      // Show preview
+      const preview = extractedText.length > 400
+        ? `${extractedText.slice(0, 400)}...`
+        : extractedText;
+
+      // Send text with interactive buttons
+      await sendInteractiveButtons(
+        this.sock,
+        chatId,
+        {
+          text: `✅ Text extracted successfully!\n\n📝 Preview:\n\n${preview}`,
+          buttons: [
+            {
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                id: '.imagetopdf_create',
+                display_text: '📄 Create PDF',
+              }),
+            },
+            {
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                id: '.imagetopdf_text',
+                display_text: '📋 Send as Text',
+              }),
+            },
+            {
+              name: 'quick_reply',
+              buttonParamsJson: JSON.stringify({
+                id: '.imagetopdf_cancel',
+                display_text: '❌ Cancel',
+              }),
+            },
+          ],
+        }
+      );
+    } catch (error) {
+      console.error('[WA] .imagetopdf error:', error.message);
+      await this.sock.sendMessage(chatId, { text: `❌ Gagal proses .imagetopdf: ${error.message}` });
+    }
+  }
+
+  async handleImageToPdfButtonResponse(chatId, buttonId) {
+    if (!this.sock) return;
+
+    const stored = this.extractedTextStorage.get(chatId);
+    if (!stored) {
+      await this.sock.sendMessage(chatId, {
+        text: '❌ Session expired. Please upload image again with .imagetopdf',
+      });
+      return;
+    }
+
+    const { text: extractedText } = stored;
+
+    try {
+      if (buttonId === '.imagetopdf_cancel') {
+        await this.sock.sendMessage(chatId, { text: '❌ Cancelled.' });
+        this.extractedTextStorage.delete(chatId);
+        return;
+      }
+
+      if (buttonId === '.imagetopdf_text') {
+        const txtFileName = `extracted-text-${Date.now()}.txt`;
+        await this.sock.sendMessage(chatId, {
+          document: Buffer.from(extractedText, 'utf8'),
+          fileName: txtFileName,
+          mimetype: 'text/plain',
+          caption: '✅ Extracted text as TXT file',
+        });
+        this.extractedTextStorage.delete(chatId);
+        return;
+      }
+
+      if (buttonId === '.imagetopdf_create') {
+        await this.sock.sendMessage(chatId, { text: '⏳ Creating PDF...' });
+
+        // Create PDF with extracted text
+        const doc = new PDFDocument({
+          margin: 40,
+          size: 'A4',
+        });
+
+        const pdfFileName = `image-to-pdf-${Date.now()}.pdf`;
+        const pdfPath = path.join(tempDir, pdfFileName);
+
+        // Ensure temp directory exists
+        await fs.promises.mkdir(tempDir, { recursive: true });
+
+        const pdfStream = fs.createWriteStream(pdfPath);
+        doc.pipe(pdfStream);
+
+        // Add title
+        doc.fontSize(14).font('Helvetica-Bold').text('Extracted Text from Image', { underline: true });
+        doc.moveDown(0.5);
+
+        // Add timestamp
+        doc.fontSize(9).font('Helvetica').text(`Created: ${new Date().toLocaleString()}`);
+        doc.moveDown(0.5);
+
+        // Add separator
+        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+        doc.moveDown(0.5);
+
+        // Add extracted text
+        doc.fontSize(11).font('Helvetica').text(extractedText, {
+          align: 'left',
+          width: 515,
+        });
+
+        // Finalize PDF
+        doc.end();
+
+        // Wait for PDF to finish writing
+        await new Promise((resolve, reject) => {
+          pdfStream.on('finish', resolve);
+          pdfStream.on('error', reject);
+        });
+
+        // Send the PDF file
+        const pdfBuffer = await fs.promises.readFile(pdfPath);
+
+        await this.sock.sendMessage(chatId, {
+          document: pdfBuffer,
+          fileName: pdfFileName,
+          mimetype: 'application/pdf',
+          caption: '✅ PDF created successfully!',
+        });
+
+        // Clean up temp file
+        await fs.promises.rm(pdfPath, { force: true }).catch(() => {});
+        this.extractedTextStorage.delete(chatId);
+      }
+    } catch (error) {
+      console.error('[WA] .imagetopdf button response error:', error.message);
+      await this.sock.sendMessage(chatId, { text: `❌ Error: ${error.message}` });
+      this.extractedTextStorage.delete(chatId);
+    }
+  }
+
+  isValidTimeZone(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return false;
+
+    try {
+      new Intl.DateTimeFormat('en-GB', { timeZone: raw }).format(new Date());
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  formatCurrentTimeForZone(timeZone) {
+    const zone = String(timeZone || 'UTC').trim() || 'UTC';
+    return new Date().toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZone: zone,
+    });
+  }
+
+  async handleTimeZoneCommand(chatId, rawText) {
+    if (!this.sock) return;
+
+    const args = stripCommandPrefix(rawText);
+    const requestedTimeZone = String(args || '').trim();
+    const currentSettings = accessControlStore.getSettings();
+    const currentTimeZone = String(currentSettings?.timeZone || 'UTC').trim() || 'UTC';
+
+    if (!requestedTimeZone) {
+      const nowInZone = this.formatCurrentTimeForZone(currentTimeZone);
+      await this.sock.sendMessage(chatId, {
+        text: `Current bot timezone: ${currentTimeZone}\nCurrent time: ${nowInZone}\n\nUse: .timezone Asia/Kuala_Lumpur`,
+      });
+      return;
+    }
+
+    if (!this.isValidTimeZone(requestedTimeZone)) {
+      await this.sock.sendMessage(chatId, {
+        text: 'Invalid timezone. Example: .timezone Asia/Kuala_Lumpur',
+      });
+      return;
+    }
+
+    const updated = accessControlStore.updateSettings({ timeZone: requestedTimeZone });
+    const activeTimeZone = String(updated?.timeZone || requestedTimeZone).trim() || 'UTC';
+    const nowInZone = this.formatCurrentTimeForZone(activeTimeZone);
+
+    await this.sock.sendMessage(chatId, {
+      text: `Timezone updated to ${activeTimeZone}\nCurrent time: ${nowInZone}`,
+    });
   }
 
   async handleScheduleCommand(chatId, message, rawText) {
@@ -1339,7 +2113,17 @@ class WhatsAppService {
       };
     }).filter(Boolean);
     const usageButtons = buildUsageInteractiveButtons(normalizedButtons, scheduleShareUrl);
-    if (!usageButtons.length) {
+    const hasScheduleShareCta = usageButtons.some((button) => {
+      if (!button || String(button.name || '').trim() !== 'cta_url') return false;
+      try {
+        const params = JSON.parse(button.buttonParamsJson || '{}');
+        return String(params.url || '').trim() === scheduleShareUrl;
+      } catch (error) {
+        return false;
+      }
+    });
+
+    if (!usageButtons.length || !hasScheduleShareCta) {
       usageButtons.push({
         name: 'cta_url',
         buttonParamsJson: JSON.stringify({

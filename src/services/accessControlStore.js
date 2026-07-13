@@ -7,6 +7,7 @@ const DATA_FILE = path.join(DATA_DIR, 'access-control-settings.json');
 const DEFAULT_SETTINGS = {
   ownerNumber: '',
   commandMode: 'public',
+  timeZone: 'Asia/Kuala_Lumpur',
 };
 
 function normalizeOwnerNumber(value) {
@@ -23,11 +24,25 @@ function normalizeCommandMode(value) {
   return mode === 'private' ? 'private' : 'public';
 }
 
+function normalizeTimeZone(value) {
+  const fallback = 'Asia/Kuala_Lumpur';
+  const raw = String(value || '').trim();
+  if (!raw) return fallback;
+
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: raw }).format(new Date());
+    return raw;
+  } catch (error) {
+    return fallback;
+  }
+}
+
 function normalizeSettings(value) {
   const source = value && typeof value === 'object' ? value : {};
   return {
     ownerNumber: normalizeOwnerNumber(source.ownerNumber),
     commandMode: normalizeCommandMode(source.commandMode),
+    timeZone: normalizeTimeZone(source.timeZone),
   };
 }
 
@@ -56,6 +71,7 @@ function getSettings() {
   return {
     ownerNumber: settings.ownerNumber,
     commandMode: settings.commandMode,
+    timeZone: settings.timeZone,
   };
 }
 
@@ -79,6 +95,14 @@ function updateSettings(partial) {
     }
   }
 
+  if (Object.prototype.hasOwnProperty.call(next, 'timeZone')) {
+    const normalizedTimeZone = normalizeTimeZone(next.timeZone);
+    if (settings.timeZone !== normalizedTimeZone) {
+      settings.timeZone = normalizedTimeZone;
+      changed = true;
+    }
+  }
+
   if (changed) {
     persistSettings();
   }
@@ -91,4 +115,5 @@ module.exports = {
   updateSettings,
   normalizeOwnerNumber,
   normalizeCommandMode,
+  normalizeTimeZone,
 };

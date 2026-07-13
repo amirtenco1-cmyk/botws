@@ -403,9 +403,9 @@
 
                       <div id="wa-qr-wrap" class="qr-wrap linked-qr-wrap <%= waState.ready ? 'is-connected' : '' %>" <%= waState.ready || waState.qrCodeDataUrl ? '' : 'hidden' %>>
                         <% if (waState.qrCodeDataUrl) { %>
-                        <img src="<%= waState.qrCodeDataUrl %>" alt="QR WhatsApp" class="qr" <%= !waState.ready && waState.qrCodeDataUrl ? '' : 'hidden' %> />
+                        <img src="<%= waState.qrCodeDataUrl %>" alt="QR WhatsApp" class="qr" decoding="async" loading="eager" draggable="false" <%= !waState.ready && waState.qrCodeDataUrl ? '' : 'hidden' %> />
                         <% } else { %>
-                        <img src="" alt="QR WhatsApp" class="qr" hidden />
+                        <img src="" alt="QR WhatsApp" class="qr" decoding="async" loading="eager" draggable="false" hidden />
                         <% } %>
                         <div id="wa-qr-connected-banner" class="qr-connected-banner" <%= waState.ready ? '' : 'hidden' %>>
                           <span class="connected-icon" aria-hidden="true">✓</span>
@@ -422,7 +422,7 @@
                           <li>Scan the QR code above using your phone camera.</li>
                         </ol>
                         <div class="qr-actions" id="wa-qr-actions" <%= waState.ready ? 'hidden' : '' %>>
-                          <button type="button" class="btn btn-outline btn-sm" id="refreshQrBtn">Refresh QR</button>
+                          <button type="button" class="btn btn-outline btn-sm" id="refreshQrBtn">Get New QR</button>
                           <p id="waQrCountdown" class="qr-countdown" hidden></p>
                           <p id="waQrMeta" class="qr-meta"><%= waState.qrCodeDataUrl ? 'QR ready to scan.' : 'Waiting for QR from WhatsApp...' %></p>
                         </div>
@@ -916,7 +916,7 @@
                         </tr>
                       </thead>
                       <tbody id="command-table-body">
-                        <% const builtInCommandTriggers = new Set(['.schedule', '.schedulelist', '.scheduledelete', '.sch', '.schlist', '.schdel', '.vv', '.sticker', '.s', '.zip', '.unzip', '.pdf2txt', '.maketxt', '.qrcode']); %>
+                        <% const builtInCommandTriggers = new Set(['.schedule', '.schedulelist', '.scheduledelete', '.sch', '.schlist', '.schdel', '.vv', '.sticker', '.s', '.zip', '.unzip', '.pdf2txt', '.maketxt', '.qrcode', '.imagetopdf', '.img2pdf']); %>
                         <tr class="command-row command-row-parent" data-tree-group="schedule">
                           <td class="command-name-cell">
                             <button type="button" class="command-tree-toggle" data-tree-toggle="schedule" aria-expanded="true" aria-controls="tree-schedule-children" aria-label="Collapse .sch family">
@@ -993,7 +993,7 @@
                                 <path d="M9 6l6 6-6 6"></path>
                               </svg>
                             </button>
-                            <span class="command-name">.zip / .unzip / .pdf2txt / .maketxt / .qrcode</span>
+                            <span class="command-name">.zip / .unzip / .pdf2txt / .imagetopdf / .maketxt / .qrcode</span>
                           </td>
                           <td><span class="command-source command-source-built-in">Built-in</span></td>
                           <td class="command-detail-cell"><span class="muted">File tools</span></td>
@@ -1040,13 +1040,23 @@
                           <td class="command-action-cell"><span class="muted">—</span></td>
                         </tr>
 
-                        <tr class="command-row command-row-child command-row-child-last" data-tree-parent="filetools" id="tree-filetools-children-qrcode">
+                        <tr class="command-row command-row-child" data-tree-parent="filetools" id="tree-filetools-children-qrcode">
                           <td class="command-name-cell">
                             <span class="command-tree-branch" aria-hidden="true"></span>
                             <span class="command-name">.qrcode &lt;teks/link&gt;</span>
                           </td>
                           <td><span class="command-source command-source-built-in">Built-in</span></td>
                           <td class="command-detail-cell"><span class="muted">Jana QR Code dari teks atau URL</span></td>
+                          <td class="command-action-cell"><span class="muted">—</span></td>
+                        </tr>
+
+                        <tr class="command-row command-row-child command-row-child-last" data-tree-parent="filetools" id="tree-filetools-children-imagetopdf">
+                          <td class="command-name-cell">
+                            <span class="command-tree-branch" aria-hidden="true"></span>
+                            <span class="command-name">.imagetopdf</span>
+                          </td>
+                          <td><span class="command-source command-source-built-in">Built-in</span></td>
+                          <td class="command-detail-cell"><span class="muted">Reply gambar → OCR extract text → convert ke PDF</span></td>
                           <td class="command-action-cell"><span class="muted">—</span></td>
                         </tr>
 

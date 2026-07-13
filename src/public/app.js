@@ -737,6 +737,12 @@ function formatConnectedPhone(value) {
   return `+${digits}`;
 }
 
+function normalizeQrTimestamp(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  return Math.floor(numeric);
+}
+
 function formatQrFreshnessLabel(updatedAtMs) {
   if (!updatedAtMs) return 'Waiting for QR from WhatsApp...';
   const ageSeconds = Math.max(0, Math.floor((Date.now() - updatedAtMs) / 1000));
@@ -798,9 +804,45 @@ async function performQrRefresh(options = {}) {
   }
 
   try {
-    await refreshWhatsAppState();
+    const response = await fetch('/api/whatsapp/refresh-qr', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to refresh QR code');
+    }
+    renderWhatsAppState(data);
+
+    if (!data.ready && !data.qrCodeDataUrl) {
+      if (waQrMeta) {
+        waQrMeta.textContent = 'Waiting for new QR from WhatsApp...';
+      }
+
+      const maxAttempts = 15;
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+
+        const stateResponse = await fetch('/api/whatsapp/state');
+        if (!stateResponse.ok) {
+          continue;
+        }
+
+        const nextState = await stateResponse.json().catch(() => null);
+        if (!nextState) {
+          continue;
+        }
+
+        renderWhatsAppState(nextState);
+        if (nextState.ready || nextState.qrCodeDataUrl) {
+          break;
+        }
+      }
+    }
+
     if (!isWhatsAppReady && waQrMeta && lastQrUpdatedAt) {
       waQrMeta.textContent = formatQrFreshnessLabel(lastQrUpdatedAt);
+    }
+  } catch (error) {
+    if (waQrMeta) {
+      waQrMeta.textContent = error.message || 'Failed to refresh QR code';
     }
   } finally {
     isRefreshingQr = false;
@@ -1258,9 +1300,15 @@ function normalizeCommandMode(value) {
 
 function normalizeAccessControlSettings(value) {
   const source = value && typeof value === 'object' ? value : {};
+  const rawTimeZone = String(source.timeZone || '').trim();
+  const normalizedTimeZone = isSupportedTimeZone(rawTimeZone)
+    ? rawTimeZone
+    : (isSupportedTimeZone(getSelectedTimeZone()) ? getSelectedTimeZone() : 'UTC');
+
   return {
     ownerNumber: normalizeOwnerNumber(source.ownerNumber),
     commandMode: normalizeCommandMode(source.commandMode),
+    timeZone: normalizedTimeZone,
   };
 }
 
@@ -1293,6 +1341,23 @@ function applyAccessControlUI(settings) {
   const normalized = normalizeAccessControlSettings(settings);
   applyOwnerNumberUI(normalized.ownerNumber);
   applyCommandModeUI(normalized.commandMode);
+
+  if (normalized.timeZone && isSupportedTimeZone(normalized.timeZone)) {
+    if (timezoneSettingSelect) {
+      const hasOption = Array.from(timezoneSettingSelect.options || []).some((item) => item.value === normalized.timeZone);
+      if (!hasOption) {
+        const dynamic = document.createElement('option');
+        dynamic.value = normalized.timeZone;
+        dynamic.textContent = `${normalized.timeZone} (Saved)`;
+        timezoneSettingSelect.appendChild(dynamic);
+      }
+      timezoneSettingSelect.value = normalized.timeZone;
+    }
+
+    writeStoredTimeZone(normalized.timeZone);
+    applyTimeZoneSettingUI();
+    hydrateScheduleTimesToLocal();
+  }
 }
 
 async function loadAccessControlSettings() {
@@ -1662,6 +1727,97 @@ async function copyTextToClipboard(value) {
   document.body.removeChild(temp);
 }
 
+function ensureScheduleShareLinkInButtons(buttons, shareUrl) {
+  const normalizedShareUrl = String(shareUrl || '').trim();
+  if (!normalizedShareUrl) return [];
+
+  const source = Array.isArray(buttons) ? buttons : [];
+  const normalized = [];
+  let hasShareLinkButton = false;
+
+  source.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+
+    const name = String(item.name || '').trim();
+    if (!name) return;
+
+    let params = {};
+    if (typeof item.buttonParamsJson === 'string') {
+      try {
+        const parsed = JSON.parse(item.buttonParamsJson);
+        params = parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (error) {
+        params = {};
+      }
+    } else if (item.buttonParamsJson && typeof item.buttonParamsJson === 'object') {
+      params = item.buttonParamsJson;
+    }
+
+    if (name === 'cta_url') {
+      const url = String(params.url || '').trim() || normalizedShareUrl;
+      const merchantUrl = String(params.merchant_url || '').trim() || url;
+      if (url === normalizedShareUrl) {
+        hasShareLinkButton = true;
+      }
+
+      normalized.push({
+        name,
+        buttonParamsJson: JSON.stringify({
+          ...params,
+          display_text: String(params.display_text || '').trim() || DEFAULT_SCHEDULE_USAGE_BUTTON_TEXT,
+          url,
+          merchant_url: merchantUrl,
+        }),
+      });
+      return;
+    }
+
+    normalized.push({
+      name,
+      buttonParamsJson: JSON.stringify(params || {}),
+    });
+  });
+
+  if (!hasShareLinkButton) {
+    normalized.push({
+      name: 'cta_url',
+      buttonParamsJson: JSON.stringify({
+        display_text: DEFAULT_SCHEDULE_USAGE_BUTTON_TEXT,
+        url: normalizedShareUrl,
+        merchant_url: normalizedShareUrl,
+      }),
+    });
+  }
+
+  return normalized;
+}
+
+async function syncScheduleShareLinkToBuiltInSettings(shareUrl) {
+  const nextButtons = ensureScheduleShareLinkInButtons(
+    builtInCommandSettings?.scheduleUsageButtons,
+    shareUrl
+  );
+
+  if (!nextButtons.length) return;
+
+  const response = await fetch('/api/built-in-commands', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      scheduleUsageHelpText: String(builtInCommandSettings?.scheduleUsageHelpText || '').trim() || DEFAULT_SCHEDULE_USAGE_HELP_TEXT,
+      scheduleUsageButtons: nextButtons,
+    }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to sync schedule share link');
+  }
+
+  builtInCommandSettings = normalizeBuiltInCommandSettings(data);
+  applyBuiltInCommandSettingsUI();
+}
+
 function setActiveNavItemByHash(hash) {
   if (!navItems.length) return;
   let normalizedHash = String(hash || '');
@@ -1736,6 +1892,7 @@ function renderWhatsAppState(state) {
   document.body.classList.toggle('wa-ready', isReady);
   const statusText = String(state.status || (isReady ? 'WhatsApp connected' : 'Initializing...'));
   const qrCodeDataUrl = typeof state.qrCodeDataUrl === 'string' ? state.qrCodeDataUrl : '';
+  const qrCodeUpdatedAt = normalizeQrTimestamp(state.qrCodeUpdatedAt);
   const connectedAccount = state.connectedAccount && typeof state.connectedAccount === 'object'
     ? state.connectedAccount
     : {};
@@ -1852,11 +2009,17 @@ function renderWhatsAppState(state) {
       }
       renderQrCountdown(0);
     } else if (qrCodeDataUrl) {
+      if (qrCodeUpdatedAt) {
+        lastQrUpdatedAt = qrCodeUpdatedAt;
+      }
+
       if (lastRenderedQrCodeDataUrl !== qrCodeDataUrl) {
         waQrImage.src = qrCodeDataUrl;
         waQrImage.alt = 'Scan this WhatsApp QR code to connect';
         lastRenderedQrCodeDataUrl = qrCodeDataUrl;
-        lastQrUpdatedAt = Date.now();
+        if (!lastQrUpdatedAt) {
+          lastQrUpdatedAt = Date.now();
+        }
         lastQrAutoRefreshAt = 0;
       }
       waQrImage.hidden = false;
@@ -2076,6 +2239,7 @@ if (ownerNumberSaveBtn) {
     saveAccessControlSettings({
       ownerNumber: normalizeOwnerNumber(ownerNumberInput?.value || ''),
       commandMode: normalizeCommandMode(commandModeSelect?.value || 'public'),
+      timeZone: getSelectedTimeZone(),
     });
   });
 }
@@ -2164,6 +2328,7 @@ if (shareScheduleLinkBtn) {
     }
 
     try {
+      await syncScheduleShareLinkToBuiltInSettings(shareUrl);
       await copyTextToClipboard(shareUrl);
       if (shareScheduleLinkFeedback) {
         shareScheduleLinkFeedback.textContent = `Share link copied: ${shareUrl}`;
